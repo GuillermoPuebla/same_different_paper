@@ -1,6 +1,6 @@
 Repository for "Can deep convolutional neural networks support relational reasoning in the same-different task?".
 
-We provide the data of the problem #1 of SVRT in the "data" folder.
+\item We provide the data of the problem #1 of SVRT in the "data" folder.
 The script "generate_datasets.py" generates all the aditional data to replicate simulations 1 to 6.   
 The script "generate_sort_of_clevr.py" generates the Sort-of-CLEVR dataset.
 The script "generate_TUBerlin.py" downloads a local copy of the TU-Berlin dataset and generates the version that we used to pretrain the Resnet-50 model on Simulation 1.
