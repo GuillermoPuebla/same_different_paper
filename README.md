@@ -1,4 +1,4 @@
-# Repository for "Can deep convolutional neural networks support relational reasoning in the same-different task?".
+# Repository for: Can deep convolutional neural networks support relational reasoning in the same-different task?
 
 1. We provide the data of the problem #1 of SVRT in the "data" folder.
 2. The script "generate_datasets.py" generates all the aditional data to replicate simulations 1 to 6.   
