@@ -2243,261 +2243,124 @@ def save_dataset_two_chanels(data_generator, size, tfrecord_file_name):
                 writer.write(example.SerializeToString())
 
 def make_datasets(
-    train_generators, 
-    train_data_names, 
-    test_generators, 
-    test_data_names,
-    val_generators,
-    val_data_names,
-    train_size, 
-    test_size,
-    val_size
+    dataset_generators, 
+    dataset_names, 
+    size
     ):
-    for gen, name in zip(train_generators, train_data_names):
-        save_dataset(data_generator=gen, size=train_size, tfrecord_file_name=name)
-    
-    for gen, name in zip(test_generators, test_data_names):
-        save_dataset(data_generator=gen, size=test_size, tfrecord_file_name=name)
-
-    for gen, name in zip(val_generators, val_data_names):
-        save_dataset(data_generator=gen, size=val_size, tfrecord_file_name=name)
-    
+    for gen, name in zip(dataset_generators, dataset_names):
+        save_dataset(data_generator=gen, size=size, tfrecord_file_name=name)    
     return
 
-def make_datasets_two_chanels(
-    train_generators, 
-    train_data_names, 
-    test_generators, 
-    test_data_names,
-    val_generators,
-    val_data_names,
-    train_size, 
-    test_size,
-    val_size
-    ):
-    for gen, name in zip(train_generators, train_data_names):
-        save_dataset_two_chanels(data_generator=gen, size=train_size, tfrecord_file_name=name)
-    
-    for gen, name in zip(test_generators, test_data_names):
-        save_dataset_two_chanels(data_generator=gen, size=test_size, tfrecord_file_name=name)
-    
-    for gen, name in zip(val_generators, val_data_names):
-        save_dataset_two_chanels(data_generator=gen, size=val_size, tfrecord_file_name=name)
-    
-    return
 
 if __name__ == '__main__':
-    # Dataset parameters.
+    # Dataset parameters
     BATCH_SIZE = 100
-    TRAIN_SIZE = 28000 // BATCH_SIZE
-    VAL_SIZE = 5600 // BATCH_SIZE
-    TEST_SIZE = 11200 // BATCH_SIZE
+    DS_SIZE = (5600//2) // BATCH_SIZE
 
-    # Instantiate train/test generators.
-    irregular_gen = irregular_gen(batch_size=BATCH_SIZE)
-    regular_gen = regular_gen(batch_size=BATCH_SIZE)
-    open_gen = open_gen(batch_size=BATCH_SIZE)
-    wider_line_gen = wider_line_gen(batch_size=BATCH_SIZE)
-    scrambled_gen = scrambled_gen(batch_size=BATCH_SIZE)
-    random_color_gen = random_color_gen(batch_size=BATCH_SIZE)
-    filled_gen = filled_gen(batch_size=BATCH_SIZE)
-    lines_gen = lines_gen(batch_size=BATCH_SIZE)
-    arrows_gen = arrows_gen(batch_size=BATCH_SIZE)
+    # Instantiate sim1 generators
+    irregular_same_gen = irregular_gen(batch_size=BATCH_SIZE, category_type='same')
+    irregular_diff_gen = irregular_gen(batch_size=BATCH_SIZE, category_type='different')
+    regular_same_gen = regular_gen(batch_size=BATCH_SIZE, category_type='same')
+    regular_diff_gen = regular_gen(batch_size=BATCH_SIZE, category_type='different')
+    open_same_gen = open_gen(batch_size=BATCH_SIZE, category_type='same')
+    open_diff_gen = open_gen(batch_size=BATCH_SIZE, category_type='different')
+    wider_line_same_gen = wider_line_gen(batch_size=BATCH_SIZE, category_type='same')
+    wider_line_diff_gen = wider_line_gen(batch_size=BATCH_SIZE, category_type='different')
+    scrambled_same_gen = scrambled_gen(batch_size=BATCH_SIZE, category_type='same')
+    scrambled_diff_gen = scrambled_gen(batch_size=BATCH_SIZE, category_type='different')
+    random_color_same_gen = random_color_gen(batch_size=BATCH_SIZE, category_type='same')
+    random_color_diff_gen = random_color_gen(batch_size=BATCH_SIZE, category_type='different')
+    filled_same_gen = filled_gen(batch_size=BATCH_SIZE, category_type='same')
+    filled_diff_gen = filled_gen(batch_size=BATCH_SIZE, category_type='different')
+    lines_same_gen = lines_gen(batch_size=BATCH_SIZE, category_type='same')
+    lines_diff_gen = lines_gen(batch_size=BATCH_SIZE, category_type='different')
+    arrows_same_gen = arrows_gen(batch_size=BATCH_SIZE, category_type='same')
+    arrows_diff_gen = arrows_gen(batch_size=BATCH_SIZE, category_type='different')
 
-    # Instantiate test only generators.
-    rectangles_gen = rectangles_gen(batch_size=BATCH_SIZE)
-    straight_lines_gen = straight_lines_gen(batch_size=BATCH_SIZE)
-    connected_squares_gen = connected_squares_gen(batch_size=BATCH_SIZE)
-    connected_circles_gen = connected_circles_gen(batch_size=BATCH_SIZE)
+    # Instantiate sim5 only generators
+    rectangles_same_gen = rectangles_gen(batch_size=BATCH_SIZE, category_type='same')
+    rectangles_diff_gen = rectangles_gen(batch_size=BATCH_SIZE, category_type='different')
+    straight_lines_same_gen = straight_lines_gen(batch_size=BATCH_SIZE, category_type='same')
+    straight_lines_diff_gen = straight_lines_gen(batch_size=BATCH_SIZE, category_type='different')
+    connected_squares_same_gen = connected_squares_gen(batch_size=BATCH_SIZE, category_type='same')
+    connected_squares_diff_gen = connected_squares_gen(batch_size=BATCH_SIZE, category_type='different')
+    connected_circles_same_gen = connected_circles_gen(batch_size=BATCH_SIZE, category_type='same')
+    connected_circles_diff_gen = connected_circles_gen(batch_size=BATCH_SIZE, category_type='different')
 
-    # Instantiate double chanel train/test generators.
-    irregular_two_chanels_gen = irregular_two_chanels_gen(batch_size=BATCH_SIZE)
-    regular_two_chanels_gen = regular_two_chanels_gen(batch_size=BATCH_SIZE)
-    open_two_chanels_gen = open_two_chanels_gen(batch_size=BATCH_SIZE)
-    wider_line_two_chanels_gen = wider_two_chanels_gen(batch_size=BATCH_SIZE)
-    scrambled_two_chanels_gen = scrambled_two_chanels_gen(batch_size=BATCH_SIZE)
-    random_color_two_chanels_gen = random_two_chanels_gen(batch_size=BATCH_SIZE)
-    filled_two_chanels_gen = filled_two_chanels_gen(batch_size=BATCH_SIZE)
-    lines_two_chanels_gen = lines_two_chanels_gen(batch_size=BATCH_SIZE)
-    arrows_two_chanels_gen = arrows_two_chanels_gen(batch_size=BATCH_SIZE)
+    dataset_generators = [
+        irregular_same_gen,
+        irregular_diff_gen,
+        regular_same_gen,
+        regular_diff_gen,
+        open_same_gen,
+        open_diff_gen,
+        wider_line_same_gen,
+        wider_line_diff_gen,
+        scrambled_same_gen,
+        scrambled_diff_gen,
+        random_color_same_gen,
+        random_color_diff_gen,
+        filled_same_gen,
+        filled_diff_gen,
+        lines_same_gen,
+        lines_diff_gen,
+        arrows_same_gen,
+        arrows_diff_gen,
+        rectangles_same_gen,
+        rectangles_diff_gen,
+        straight_lines_same_gen,
+        straight_lines_diff_gen,
+        connected_squares_same_gen,
+        connected_squares_diff_gen,
+        connected_circles_same_gen,
+        connected_circles_diff_gen
+        ]
 
-    # Instantiate double chanel test only generators.
-    rectangles_two_chanels_gen = rectangles_two_chanels_gen(batch_size=BATCH_SIZE)
-    straight_lines_two_chanels_gen = straingt_lines_two_chanels_gen(batch_size=BATCH_SIZE)
-    connected_squares_two_chanels_gen = connected_squares_two_chanels_gen(batch_size=BATCH_SIZE)
-    connected_circles_two_chanels_gen = connected_circles_two_chanels_gen(batch_size=BATCH_SIZE)
+    dataset_names = [
+        'data/density_datasets/irregular_density_same.tfrecords',
+        'data/density_datasets/irregular_density_diff.tfrecords',
 
-    train_dataset_generators = [
-        irregular_gen,
-        regular_gen,
-        open_gen,
-        wider_line_gen,
-        scrambled_gen,
-        random_color_gen,
-        filled_gen,
-        lines_gen,
-        arrows_gen]
+        'data/density_datasets/regular_density_same.tfrecords',
+        'data/density_datasets/regular_density_diff.tfrecords',
 
-    train_dataset_names  = [
-        'data/irregular_train.tfrecords',
-        'data/regular_train.tfrecords',
-        'data/open_train.tfrecords',
-        'data/wider_line_train.tfrecords',
-        'data/scrambled_train.tfrecords',
-        'data/random_color_train.tfrecords',
-        'data/filled_train.tfrecords',
-        'data/lines_train.tfrecords',
-        'data/arrows_train.tfrecords']
+        'data/density_datasets/open_density_same.tfrecords',
+        'data/density_datasets/open_density_diff.tfrecords',
 
-    test_dataset_generators = [
-        irregular_gen,
-        regular_gen,
-        open_gen,
-        wider_line_gen,
-        scrambled_gen,
-        random_color_gen,
-        filled_gen,
-        lines_gen,
-        arrows_gen,
-        rectangles_gen,
-        straight_lines_gen,
-        connected_squares_gen,
-        connected_circles_gen]
+        'data/density_datasets/wider_line_density_same.tfrecords',
+        'data/density_datasets/wider_line_density_diff.tfrecords',
 
-    test_dataset_names = [
-        'data/irregular_test.tfrecords',
-        'data/regular_test.tfrecords',
-        'data/open_test.tfrecords',
-        'data/wider_line_test.tfrecords',
-        'data/scrambled_test.tfrecords',
-        'data/random_color_test.tfrecords',
-        'data/filled_test.tfrecords',
-        'data/lines_test.tfrecords',
-        'data/arrows_test.tfrecords',
-        'data/rectangles_test.tfrecords',
-        'data/straight_lines_test.tfrecords',
-        'data/connected_squares_test.tfrecords',
-        'data/connected_circles_test.tfrecords']
+        'data/density_datasets/scrambled_density_same.tfrecords',
+        'data/density_datasets/scrambled_density_diff.tfrecords',
 
-    val_dataset_generators = [
-        irregular_gen,
-        regular_gen,
-        open_gen,
-        wider_line_gen,
-        scrambled_gen,
-        random_color_gen,
-        filled_gen,
-        lines_gen,
-        arrows_gen]
+        'data/density_datasets/random_color_density_same.tfrecords',
+        'data/density_datasets/random_color_density_diff.tfrecords',
 
-    val_dataset_names  = [
-        'data/irregular_val.tfrecords',
-        'data/regular_val.tfrecords',
-        'data/open_val.tfrecords',
-        'data/wider_line_val.tfrecords',
-        'data/scrambled_val.tfrecords',
-        'data/random_color_val.tfrecords',
-        'data/filled_val.tfrecords',
-        'data/lines_val.tfrecords',
-        'data/arrows_val.tfrecords']
+        'data/density_datasets/filled_density_same.tfrecords',
+        'data/density_datasets/filled_density_diff.tfrecords',
 
-    # Save single chanel datasets.
+        'data/density_datasets/lines_density_same.tfrecords',
+        'data/density_datasets/lines_density_diff.tfrecords',
+
+        'data/density_datasets/arrows_density_same.tfrecords',
+        'data/density_datasets/arrows_density_diff.tfrecords',
+
+        'data/density_datasets/rectangles_density_same.tfrecords',
+        'data/density_datasets/rectangles_density_diff.tfrecords',
+
+        'data/density_datasets/straight_lines_density_same.tfrecords',
+        'data/density_datasets/straight_lines_density_diff.tfrecords',
+
+        'data/density_datasets/connected_squares_density_same.tfrecords',
+        'data/density_datasets/connected_squares_density_diff.tfrecords',
+
+        'data/density_datasets/connected_circles_density_same.tfrecords',
+        'data/density_datasets/connected_circles_density_diff.tfrecords'
+        ]
+
+    # Save
     make_datasets(
-        train_generators=train_dataset_generators,
-        train_data_names=train_dataset_names,
-        test_generators=test_dataset_generators,
-        test_data_names=test_dataset_names,
-        val_generators=val_dataset_generators,
-        val_data_names=val_dataset_names,
-        train_size=TRAIN_SIZE,
-        test_size=TEST_SIZE,
-        val_size=VAL_SIZE
+        dataset_generators=dataset_generators, 
+        dataset_names=dataset_names, 
+        size=DS_SIZE
         )
-
-    two_chanels_train_dataset_generators = [
-        irregular_two_chanels_gen,
-        regular_two_chanels_gen,
-        open_two_chanels_gen,
-        wider_line_two_chanels_gen,
-        scrambled_two_chanels_gen,
-        random_color_two_chanels_gen,
-        filled_two_chanels_gen,
-        lines_two_chanels_gen,
-        arrows_two_chanels_gen]
-
-    two_chanels_train_dataset_names  = [
-        'data/irregular_two_chanels_train.tfrecords',
-        'data/regular_two_chanels_train.tfrecords',
-        'data/open_two_chanels_train.tfrecords',
-        'data/wider_line_two_chanels_train.tfrecords',
-        'data/scrambled_two_chanels_train.tfrecords',
-        'data/random_color_two_chanels_train.tfrecords',
-        'data/filled_two_chanels_train.tfrecords',
-        'data/lines_two_chanels_train.tfrecords',
-        'data/arrows_two_chanels_train.tfrecords']
     
-    two_chanels_test_dataset_generators = [
-        irregular_two_chanels_gen,
-        regular_two_chanels_gen,
-        open_two_chanels_gen,
-        wider_line_two_chanels_gen,
-        scrambled_two_chanels_gen,
-        random_color_two_chanels_gen,
-        filled_two_chanels_gen,
-        lines_two_chanels_gen,
-        arrows_two_chanels_gen,
-        rectangles_two_chanels_gen,
-        straight_lines_two_chanels_gen,
-        connected_squares_two_chanels_gen,
-        connected_circles_two_chanels_gen]
-    
-    two_chanels_test_dataset_names = [
-        'data/irregular_two_chanels_test.tfrecords',
-        'data/regular_two_chanels_test.tfrecords',
-        'data/open_two_chanels_test.tfrecords',
-        'data/wider_line_two_chanels_test.tfrecords',
-        'data/scrambled_two_chanels_test.tfrecords',
-        'data/random_color_two_chanels_test.tfrecords',
-        'data/filled_two_chanels_test.tfrecords',
-        'data/lines_two_chanels_test.tfrecords',
-        'data/arrows_two_chanels_test.tfrecords',
-        'data/rectangles_two_chanels_test.tfrecords',
-        'data/straight_lines_two_chanels_test.tfrecords',
-        'data/connected_squares_two_chanels_test.tfrecords',
-        'data/connected_circles_two_chanels_test.tfrecords']
-
-    two_chanels_val_dataset_generators = [
-        irregular_two_chanels_gen,
-        regular_two_chanels_gen,
-        open_two_chanels_gen,
-        wider_line_two_chanels_gen,
-        scrambled_two_chanels_gen,
-        random_color_two_chanels_gen,
-        filled_two_chanels_gen,
-        lines_two_chanels_gen,
-        arrows_two_chanels_gen]
-
-    two_chanels_val_dataset_names  = [
-        'data/irregular_two_chanels_val.tfrecords',
-        'data/regular_two_chanels_val.tfrecords',
-        'data/open_two_chanels_val.tfrecords',
-        'data/wider_line_two_chanels_val.tfrecords',
-        'data/scrambled_two_chanels_val.tfrecords',
-        'data/random_color_two_chanels_val.tfrecords',
-        'data/filled_two_chanels_val.tfrecords',
-        'data/lines_two_chanels_val.tfrecords',
-        'data/arrows_two_chanels_val.tfrecords']
-
-    # Save double chanel datasets.
-    make_datasets_two_chanels(
-        train_generators=two_chanels_train_dataset_generators,
-        train_data_names=two_chanels_train_dataset_names,
-        test_generators=two_chanels_test_dataset_generators,
-        test_data_names=two_chanels_test_dataset_names,
-        val_generators=two_chanels_val_dataset_generators,
-        val_data_names=two_chanels_val_dataset_names,
-        train_size=TRAIN_SIZE,
-        test_size=TEST_SIZE,
-        val_size=VAL_SIZE
-        )
-    print('datasets saved to: ~/data')

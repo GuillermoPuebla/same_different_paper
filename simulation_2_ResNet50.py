@@ -4,142 +4,80 @@ from os.path import isfile, join
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-from tensorflow.keras import backend as K
-from tensorflow.keras.applications import ResNet50, ResNet101, ResNet152
+from tensorflow.keras.applications import ResNet50
 from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Dense, Input, Concatenate, Lambda, Average, Dropout
+from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Flatten, Input
 
-# Relation Network functions.
-def get_dense(n, units):
-    r = []
-    for k in range(n):
-        r.append(Dense(units, activation='relu'))
-    return r
 
-def get_MLP(n, denses):
-    def g(x):
-        d = x
-        for k in range(n):
-            d = denses[k](d)
-        return d
-    return g
-
-def dropout_dense(x, units):
-    y = Dense(units, activation='relu')(x)
-    y = Dropout(0.5)(y)
-    return y
-
-def build_tag(conv):
-    d = K.int_shape(conv)[2]
-    tag = np.zeros((d,d,2))
-    for i in range(d):
-        for j in range(d):
-            tag[i,j,0] = float(int(i%d))/(d-1)*2-1
-            tag[i,j,1] = float(int(j%d))/(d-1)*2-1
-    tag = K.variable(tag)
-    tag = K.expand_dims(tag, axis=0)
-    batch_size = K.shape(conv)[0]
-    tag = K.tile(tag, [batch_size,1,1,1])
-    return tag
-
-def slice_1(t):
-    return t[:, 0, :, :]
-
-def slice_2(t):
-    return t[:, 1:, :, :]
-
-def slice_3(t):
-    return t[:, 0, :]
-
-def slice_4(t):
-    return t[:, 1:, :]
-
-def make_ResNet50_relnet(
-    dataset='SVRT',
-    resnet_layer='last_size_8',
-    trainable=False
-    ):
+# Model definition
+def make_ResNet50_sketch_classifier(weights=None, trainable=True):
     # Inputs.
     image = Input((128, 128, 3))
-    
-    if dataset=='sort-of-clevr':
-        question = Input((11,))
-    elif dataset=='SVRT':
-        question = Input((2,)) # same-different ([1, 0]) or relative position ([0, 1]).
-    else:
-        raise ValueError('dataset not supported!')
-    
+
     # Get CNN features.
-    base_model = ResNet50(weights='imagenet', include_top=False, input_tensor=image)
-        
-    if resnet_layer=='last_size_4':
-        layer_name = 'conv5_block3_out' # shape: (None, 4, 4, 2048)
-    elif resnet_layer=='last_size_8':
-        layer_name = 'conv4_block6_out' # shape: (None, 8, 8, 1024)
-    else:
-        raise ValueError('layer not supported!')
-    cnn_features = base_model.get_layer(layer_name).output
-    
+    base_model = ResNet50(weights=weights, include_top=False, input_tensor=image)
+
     # Freeze the base_model.
     base_model.trainable = trainable
     
-    # Make tag and append to cnn features.
-    tag = build_tag(cnn_features)
-    cnn_features = Concatenate()([cnn_features, tag])
+    # Add a global spatial average pooling layer.
+    x = base_model.output
+    x = GlobalAveragePooling2D()(x)
     
-    # Make list with objects.
-    shapes = cnn_features.shape
-    w, h = shapes[1], shapes[2]
+    # Add a fully-connected layer.
+    x = Dense(1024, activation='relu')(x)
+    
+    # Add a logistic layer.
+    predictions = Dense(250, activation='softmax')(x)
+    
+    # Model to train.
+    model = Model(inputs=base_model.input, outputs=predictions)
 
-    slice_layer1 = Lambda(slice_1)
-    slice_layer2 = Lambda(slice_2)
-    slice_layer3 = Lambda(slice_3)
-    slice_layer4 = Lambda(slice_4)
+    return base_model, model
 
-    features = []
-    for k1 in range(w):
-        features1 = slice_layer1(cnn_features)
-        cnn_features = slice_layer2(cnn_features)
-        for k2 in range(h):
-            features2 = slice_layer3(features1)
-            features1 = slice_layer4(features1)
-            features.append(features2)
+def make_ResNet50_sd_classifier(base_weights='imagenet', tuberlin_path=None, base_trainable=False, gap=True):
+    # Define input tensor
+    image = Input((128, 128, 3))
+    # Base pre-trained model
+    if base_weights == 'imagenet':
+        base_model = ResNet50(weights='imagenet', include_top=False, input_tensor=image)
+    elif base_weights is None:
+        base_model = ResNet50(weights=None, include_top=False, input_tensor=image)
+    elif base_weights == 'TU-Berlin':
+        # Get weights from sketch classifier base
+        sketch_b, sketch_m = make_ResNet50_sketch_classifier(weights=None, trainable=True)
+        sketch_m.load_weights(tuberlin_path)
+        base_weights = []
+        for layer in sketch_b.layers:
+            base_weights.append(layer.get_weights())
+        # Set weights of base model
+        base_model = ResNet50(weights=None, include_top=False, input_tensor=image)
+        i = 0
+        for layer in base_model.layers:
+            layer.set_weights(base_weights[i])
+            i += 1
+    # Freeze the if necesarry base_model
+    base_model.trainable = base_trainable
+    # Add a global spatial average pooling layer
+    x = base_model.output
+    if gap:
+        x = GlobalAveragePooling2D()(x)
+    else:
+        x = Flatten()(x)
+    # Add a fully-connected layer
+    x = Dense(1024, activation='relu')(x)
+    # Add logistic layer
+    predictions = Dense(1, activation='sigmoid')(x)
+    # This is the model we will train
+    model = Model(inputs=base_model.input, outputs=predictions)
 
-    # Make list with all combinations of objects.
-    relations = []
-    concat = Concatenate()
-    for feature1 in features:
-        for feature2 in features:
-            relations.append(concat([feature1, feature2, question]))
-    
-    # g function.
-    g_MLP = get_MLP(4, get_dense(4, units=512))
-    mid_relations = []
-    for r in relations:
-        mid_relations.append(g_MLP(r))
-    combined_relation = Average()(mid_relations)
-
-    # f function.
-    rn = Dense(512, activation='relu')(combined_relation)
-    rn = dropout_dense(rn, units=512)
-    
-    # Output.
-    if dataset == 'sort-of-clevr':
-        output_units = 10
-        answer = Dense(output_units, activation='softmax')(rn)
-    elif dataset == 'SVRT':
-        output_units = 1
-        answer = Dense(output_units, activation='sigmoid')(rn)
-    
-    model = Model(inputs=[image, question], outputs=answer)
-    
     return base_model, model
 
 # Dataset reading functions
 def get_dataset(
     batch_size, 
     tfrecord_dir, 
-    autotune_settings,
+    autotune_settings, 
     is_training=True, 
     process_img=True, 
     relnet=False
@@ -211,10 +149,10 @@ def get_dataset(
 
 def get_master_dataset(
     autotune_settings,
-    batch_size,
-    ds_dir,
-    dont_include,
-    process_img=True,
+    batch_size, 
+    ds_dir, 
+    dont_include, 
+    process_img=True, 
     relnet=False
     ):
     """Builds dataset that samples each batch from one of the training
@@ -227,112 +165,122 @@ def get_master_dataset(
     ds_original = get_dataset(
         batch_size=batch_size,
         tfrecord_dir=ds_dir+'/original_train.tfrecords',
-        autotune_settings=autotune_settings,
         is_training=True,
         process_img=process_img,
-        relnet=relnet
-        )
+        relnet=relnet,
+        autotune_settings=autotune_settings)
+    
+    # if dont_include != 'Original':
     datasets.append(ds_original)
     
     # Regular.
     ds_regular = get_dataset(
         batch_size=batch_size,
         tfrecord_dir=ds_dir+'/regular_train.tfrecords',
-        autotune_settings=autotune_settings,
         is_training=True,
         process_img=process_img,
-        relnet=relnet
-        )
+        relnet=relnet,
+        autotune_settings=autotune_settings)
+    
+    # if dont_include != 'Regular':
     datasets.append(ds_regular)
     
     # Irregular.
     ds_irregular = get_dataset(
         batch_size=batch_size,
         tfrecord_dir=ds_dir+'/irregular_train.tfrecords',
-        autotune_settings=autotune_settings,
         is_training=True,
         process_img=process_img,
-        relnet=relnet
-        )
+        relnet=relnet,
+        autotune_settings=autotune_settings)
+    
+    # if dont_include != 'Irregular':
     datasets.append(ds_irregular)
     
     # Open.
     ds_open = get_dataset(
         batch_size=batch_size,
         tfrecord_dir=ds_dir+'/open_train.tfrecords',
-        autotune_settings=autotune_settings,
         is_training=True,
         process_img=process_img,
-        relnet=relnet
-        )
+        relnet=relnet,
+        autotune_settings=autotune_settings)
+    
+    # if dont_include != 'Open':
     datasets.append(ds_open)
 
     # Wider line.
     ds_wider = get_dataset(
         batch_size=batch_size,
         tfrecord_dir=ds_dir+'/wider_line_train.tfrecords',
-        autotune_settings=autotune_settings,
         is_training=True,
         process_img=process_img,
-        relnet=relnet
-        )
-    datasets.append(ds_wider)
+        relnet=relnet,
+        autotune_settings=autotune_settings)
     
+    # if dont_include != 'Wider line':
+    datasets.append(ds_wider)
+
     # Scrambled.
     ds_scrambled = get_dataset(
         batch_size=batch_size,
         tfrecord_dir=ds_dir+'/scrambled_train.tfrecords',
-        autotune_settings=autotune_settings,
         is_training=True,
         process_img=process_img,
-        relnet=relnet
-        )
+        relnet=relnet,
+        autotune_settings=autotune_settings)
+
+    # if dont_include != 'Scrambled':
     datasets.append(ds_scrambled)
     
     # Random color.
     ds_random = get_dataset(
         batch_size=batch_size,
         tfrecord_dir=ds_dir+'/random_color_train.tfrecords',
-        autotune_settings=autotune_settings,
         is_training=True,
         process_img=process_img,
-        relnet=relnet
-        )
+        relnet=relnet,
+        autotune_settings=autotune_settings)
+    
+    # if dont_include != 'Random color':
     datasets.append(ds_random)
     
     # Filled.
     ds_filled = get_dataset(
         batch_size=batch_size,
         tfrecord_dir=ds_dir+'/filled_train.tfrecords',
-        autotune_settings=autotune_settings,
         is_training=True,
         process_img=process_img,
-        relnet=relnet
-        )
+        relnet=relnet,
+        autotune_settings=autotune_settings)
+    
+    # if dont_include != 'Filled':
     datasets.append(ds_filled)
     
     # Lines.
     ds_lines = get_dataset(
         batch_size=batch_size,
         tfrecord_dir=ds_dir+'/lines_train.tfrecords',
-        autotune_settings=autotune_settings,
         is_training=True,
         process_img=process_img,
-        relnet=relnet
-        )
+        relnet=relnet,
+        autotune_settings=autotune_settings)
+    
+    # if dont_include != 'Lines':
     datasets.append(ds_lines)
     
     # Arrows.
     ds_arrows = get_dataset(
         batch_size=batch_size,
         tfrecord_dir=ds_dir+'/arrows_train.tfrecords',
-        autotune_settings=autotune_settings,
         is_training=True,
         process_img=process_img,
-        relnet=relnet
-        )
+        relnet=relnet,
+        autotune_settings=autotune_settings)
+    
+    # if dont_include != 'Arrows':
     datasets.append(ds_arrows)
-
+    
     # Define dataset sampling. Because 'Lines' is harder to learn when learning 
     # the other at the same time, oversample it!
     if dont_include == 'Original':
@@ -363,226 +311,135 @@ def get_master_dataset(
     
     return tf.data.experimental.choose_from_datasets(datasets, choice_dataset)
 
-# Training function
-def pretrain_best_relnet_sim1(
+# Training functions
+def train_best_sim1_model(
     strategy,
     train_ds,
     val_ds,
     save_name,
-    model,
-    base_model,
     model_name,
-    epochs,
-    steps_per_epoch,
-    validation_steps,
-    start=0,
-    stop=10,
-    lr=0.0003
-    ):
-    # Repate trainign 10 times
-    for i in range(start, stop):
-        # Initialize weights
-        for layer in model.layers:
-            if hasattr(layer, 'kernel_initializer') and hasattr(layer, 'bias_initializer'):
-                layer.set_weights(
-                    [layer.kernel_initializer(shape=np.asarray(layer.kernel.shape)),
-                     layer.bias_initializer(shape=np.asarray(layer.bias.shape))
-                     ])
-        # Load imagenet weights
-        base_model.load_weights('Resnet50_no_top.h5')
-        # Train
-        filename = save_name + model_name +'_run_' + str(i) + '_log.csv'
-        history_logger = tf.keras.callbacks.CSVLogger(filename, separator=",", append=True)
-        model.fit(
-            train_ds,
-            epochs=epochs,
-            verbose=2,
-            steps_per_epoch=steps_per_epoch,
-            validation_data=val_ds,
-            validation_steps=validation_steps,
-            callbacks=[history_logger]
-            )
-        # Save weights
-        weights_name = save_name + model_name + '_instance_' + str(i) + '.hdf5'
-        model.save_weights(weights_name)
-    return
-
-def pretrain_relnet_in_all_datasets(
-    strategy,
-    autotune_settings,
-    ds_dir,
-    sim_dir,
+    epochs_top,
     epochs,
     steps_per_epoch,
     validation_steps,
     n=10,
-    lr=0.0003,
-    batch_size=64):
-    
-    # Define all master datasets
-    no_irregular_ds = get_master_dataset(batch_size=batch_size, dont_include='Irregular', ds_dir=ds_dir, process_img=True, relnet=True, autotune_settings=autotune_settings)
-    no_regular_ds = get_master_dataset(batch_size=batch_size, dont_include='Regular', ds_dir=ds_dir, process_img=True, relnet=True, autotune_settings=autotune_settings)
-    no_open_ds = get_master_dataset(batch_size=batch_size, dont_include='Open', ds_dir=ds_dir, process_img=True, relnet=True, autotune_settings=autotune_settings)
-    no_wider_ds = get_master_dataset(batch_size=batch_size, dont_include='Wider line', ds_dir=ds_dir, process_img=True, relnet=True, autotune_settings=autotune_settings)
-    no_scrambled_ds = get_master_dataset(batch_size=batch_size, dont_include='Scrambled', ds_dir=ds_dir, process_img=True, relnet=True, autotune_settings=autotune_settings)
-    no_random_ds = get_master_dataset(batch_size=batch_size, dont_include='Random color', ds_dir=ds_dir, process_img=True, relnet=True, autotune_settings=autotune_settings)
-    no_filled_ds = get_master_dataset(batch_size=batch_size, dont_include='Filled', ds_dir=ds_dir, process_img=True, relnet=True, autotune_settings=autotune_settings)
-    no_lines_ds = get_master_dataset(batch_size=batch_size, dont_include='Lines', ds_dir=ds_dir, process_img=True, relnet=True, autotune_settings=autotune_settings)
-    no_arrows_ds = get_master_dataset(batch_size=batch_size, dont_include='Arrows', ds_dir=ds_dir, process_img=True, relnet=True, autotune_settings=autotune_settings)
-    
-    ds_and_names = [
-        (no_irregular_ds, sim_dir+'/relnet_no_irregular/'),
-        (no_regular_ds, sim_dir+'/relnet_no_regular/'),
-        (no_open_ds, sim_dir+'/relnet_no_open/'),
-        (no_wider_ds, sim_dir+'/relnet_no_wider/'),
-        (no_scrambled_ds, sim_dir+'/relnet_no_scrambled/'),
-        (no_random_ds, sim_dir+'/relnet_no_random/'),
-        (no_filled_ds, sim_dir+'/relnet_no_filled/'),
-        (no_lines_ds, sim_dir+'/relnet_no_lines/'),
-        (no_arrows_ds, sim_dir+'/relnet_no_arrows/')
-        ]
-    with strategy.scope():
-        # Define model
-        base_model, model = make_ResNet50_relnet(
-            dataset='SVRT',
-            resnet_layer='last_size_8',
-            trainable=False
-            )
-        # Compile
-        model.compile(
-            optimizer=tf.keras.optimizers.Adam(lr),
-            loss='binary_crossentropy',
-            metrics=['accuracy'],
-            steps_per_execution=50
-            )
-        for ds, name in ds_and_names:
-            pretrain_best_relnet_sim1(
-                strategy=strategy,
-                train_ds=ds,
-                val_ds=None,
-                save_name=name,
-                model=model,
-                base_model=base_model,
-                model_name='RN',
-                epochs=epochs,
-                steps_per_epoch=steps_per_epoch,
-                validation_steps=None,
-                start=0,
-                stop=10,
-                lr=lr
-                )
-    return
-
-def train_best_relnet_sim1(
-    strategy,
-    train_ds,
-    val_ds,
-    save_name,
-    model,
-    model_name,
-    epochs,
-    steps_per_epoch,
-    validation_steps,
-    start=0,
-    stop=10,
     lr=0.0001
     ):
-    # Repeate trainign 10 times
-    for i in range(start, stop):
-        # Load weights 
-        weights_name = save_name + model_name + '_instance_' + str(i) + '.hdf5'
-        model.load_weights(weights_name)
-        # Train
-        filename = save_name + model_name +'_run_' + str(i) + '_log.csv'
-        history_logger = tf.keras.callbacks.CSVLogger(filename, separator=",", append=True)
-        model.fit(
-            train_ds,
-            epochs=epochs,
-            verbose=2,
-            steps_per_epoch=steps_per_epoch,
-            validation_data=val_ds,
-            validation_steps=validation_steps,
-            callbacks=[history_logger]
-            )
-        # Save weights
-        weights_name = save_name + model_name + '_instance_' + str(i) + '.hdf5'
-        model.save_weights(weights_name)
+    with strategy.scope():
+        for i in range(n):
+            # Define best model sim1: ImageNet & fine-tune & GAP
+            base_model, model = make_ResNet50_sd_classifier(
+                base_weights='imagenet',
+                base_trainable=False,
+                gap=True
+                )
+            # Compile
+            model.compile(
+                optimizer=tf.keras.optimizers.Adam(0.0003),
+                loss='binary_crossentropy',
+                metrics=['accuracy']
+                )
+            # Train
+            filename = save_name + model_name +'_run_' + str(i) + '_log.csv'
+            history_logger = tf.keras.callbacks.CSVLogger(filename, separator=",", append=True)
+            model.fit(
+                train_ds,
+                epochs=epochs_top,
+                verbose=2,
+                steps_per_epoch=steps_per_epoch,
+                validation_data=val_ds,
+                validation_steps=validation_steps,
+                callbacks=[history_logger]
+                )
+            # Unfreeze Resnet50.
+            base_model.trainable = True
+            # Re-compile
+            model.compile(
+                optimizer=tf.keras.optimizers.Adam(lr),
+                loss='binary_crossentropy',
+                metrics=['accuracy']
+                )
+            # Train
+            model.fit(
+                train_ds,
+                epochs=epochs,
+                verbose=2,
+                steps_per_epoch=steps_per_epoch,
+                validation_data=val_ds,
+                validation_steps=validation_steps,
+                callbacks=[history_logger]
+                )
+            # Save weights
+            weights_name = save_name + model_name + 'instance_' + str(i) + '.hdf5'
+            model.save_weights(weights_name)
     return
 
-def train_relnet_in_all_datasets(
+def train_in_all_datasets(
     strategy,
     autotune_settings,
     ds_dir,
     sim_dir,
+    epochs_top,
     epochs,
     steps_per_epoch,
     validation_steps,
     n=10,
     lr=0.0001,
-    batch_size=64):
+    batch_size=64
+    ):
+    # Define all master datasets.
+    no_irregular_ds = get_master_dataset(batch_size=batch_size, ds_dir=ds_dir, dont_include='Irregular', process_img=True, autotune_settings=autotune_settings)
+    no_regular_ds = get_master_dataset(batch_size=batch_size, ds_dir=ds_dir, dont_include='Regular', process_img=True, autotune_settings=autotune_settings)
+    no_open_ds = get_master_dataset(batch_size=batch_size, ds_dir=ds_dir, dont_include='Open', process_img=True, autotune_settings=autotune_settings)
+    no_wider_ds = get_master_dataset(batch_size=batch_size, ds_dir=ds_dir, dont_include='Wider line', process_img=True, autotune_settings=autotune_settings)
+    no_scrambled_ds = get_master_dataset(batch_size=batch_size, ds_dir=ds_dir, dont_include='Scrambled', process_img=True, autotune_settings=autotune_settings)
+    no_random_ds = get_master_dataset(batch_size=batch_size, ds_dir=ds_dir, dont_include='Random color', process_img=True, autotune_settings=autotune_settings)
+    no_filled_ds = get_master_dataset(batch_size=batch_size, ds_dir=ds_dir, dont_include='Filled', process_img=True, autotune_settings=autotune_settings)
+    no_lines_ds = get_master_dataset(batch_size=batch_size, ds_dir=ds_dir, dont_include='Lines', process_img=True, autotune_settings=autotune_settings)
+    no_arrows_ds = get_master_dataset(batch_size=batch_size, ds_dir=ds_dir, dont_include='Arrows', process_img=True, autotune_settings=autotune_settings)
     
-    # Define all master datasets
-    no_irregular_ds = get_master_dataset(batch_size=batch_size, dont_include='Irregular', ds_dir=ds_dir, process_img=True, relnet=True, autotune_settings=autotune_settings)
-    no_regular_ds = get_master_dataset(batch_size=batch_size, dont_include='Regular', ds_dir=ds_dir, process_img=True, relnet=True, autotune_settings=autotune_settings)
-    no_open_ds = get_master_dataset(batch_size=batch_size, dont_include='Open', ds_dir=ds_dir, process_img=True, relnet=True, autotune_settings=autotune_settings)
-    no_wider_ds = get_master_dataset(batch_size=batch_size, dont_include='Wider line', ds_dir=ds_dir, process_img=True, relnet=True, autotune_settings=autotune_settings)
-    no_scrambled_ds = get_master_dataset(batch_size=batch_size, dont_include='Scrambled', ds_dir=ds_dir, process_img=True, relnet=True, autotune_settings=autotune_settings)
-    no_random_ds = get_master_dataset(batch_size=batch_size, dont_include='Random color', ds_dir=ds_dir, process_img=True, relnet=True, autotune_settings=autotune_settings)
-    no_filled_ds = get_master_dataset(batch_size=batch_size, dont_include='Filled', ds_dir=ds_dir, process_img=True, relnet=True, autotune_settings=autotune_settings)
-    no_lines_ds = get_master_dataset(batch_size=batch_size, dont_include='Lines', ds_dir=ds_dir, process_img=True, relnet=True, autotune_settings=autotune_settings)
-    no_arrows_ds = get_master_dataset(batch_size=batch_size, dont_include='Arrows', ds_dir=ds_dir, process_img=True, relnet=True, autotune_settings=autotune_settings)
+    train_datasets = [no_irregular_ds, no_regular_ds, no_open_ds,
+                      no_wider_ds, no_scrambled_ds, no_random_ds,
+                      no_filled_ds, no_lines_ds, no_arrows_ds]
     
-    ds_and_names = [
-        (no_irregular_ds, sim_dir+'/relnet_no_irregular/'),
-        (no_regular_ds, sim_dir+'/relnet_no_regular/'),
-        (no_open_ds, sim_dir+'/relnet_no_open/'),
-        (no_wider_ds, sim_dir+'/relnet_no_wider/'),
-        (no_scrambled_ds, sim_dir+'/relnet_no_scrambled/'),
-        (no_random_ds, sim_dir+'/relnet_no_random/'),
-        (no_filled_ds, sim_dir+'/relnet_no_filled/'),
-        (no_lines_ds, sim_dir+'/relnet_no_lines/'),
-        (no_arrows_ds, sim_dir+'/relnet_no_arrows/')
-        ]
-    with strategy.scope():
-        # Define model
-        base_model, model = make_ResNet50_relnet(
-            dataset='SVRT',
-            resnet_layer='last_size_8',
-            trainable=True
+    # Validation dataset.
+    # val_ds = get_dataset(
+    #     batch_size=batch_size,
+    #     tfrecord_dir=ds_dir+'/lines_val.tfrecords',
+    #     is_training=False,
+    #     process_img=True,
+    #     autotune_settings=autotune_settings)
+    
+    # Train model in each dataset 10 times.
+    ds_and_names = [(no_irregular_ds, sim_dir+'/no_irregular/'),
+                    (no_regular_ds, sim_dir+'/no_regular/'),
+                    (no_open_ds, sim_dir+'/no_open/'),
+                    (no_wider_ds, sim_dir+'/no_wider/'),
+                    (no_scrambled_ds, sim_dir+'/no_scrambled/'),
+                    (no_random_ds, sim_dir+'/no_random/'),
+                    (no_filled_ds, sim_dir+'/no_filled/'),
+                    (no_lines_ds, sim_dir+'/no_lines/'),
+                    (no_arrows_ds, sim_dir+'/no_arrows/')]
+    
+    for ds, name in ds_and_names:
+        print(name)
+        train_best_sim1_model(
+            strategy=strategy,
+            train_ds=ds,
+            val_ds=None,
+            save_name=name,
+            model_name='ResNet',
+            epochs_top=epochs_top,
+            epochs=epochs,
+            steps_per_epoch=steps_per_epoch,
+            validation_steps=None,
+            n=n,
+            lr=lr
             )
-        # Compile
-        model.compile(
-            optimizer=tf.keras.optimizers.Adam(lr),
-            loss='binary_crossentropy',
-            metrics=['accuracy'],
-            steps_per_execution=50
-            )
-        for ds, name in ds_and_names:
-            train_best_relnet_sim1(
-                strategy=strategy,
-                train_ds=ds,
-                val_ds=None,
-                save_name=name,
-                model=model,
-                model_name='RN',
-                epochs=epochs,
-                steps_per_epoch=steps_per_epoch,
-                validation_steps=None,
-                start=2,
-                stop=10,
-                lr=lr
-                )
     return
 
 # Validation functions
-def test_model_val_auc(
-    ds_val, 
-    ds_name,
-    weights_dir,
-    model,
-    model_name, 
-    condition
-    ):
+def test_model_val_auc(ds_val, ds_name, weights_dir, gap, model_name, condition):
     """
     Tests 10 versions of a single model in a single condition using the area under the ROC curve. 
     Args:
@@ -595,7 +452,14 @@ def test_model_val_auc(
     Returns:
         A list with test data: model_name, condition, ds_name, area under the ROC curve.
     """
-    
+    # Define model
+    base_model, model = make_ResNet50_sd_classifier(base_weights=None, base_trainable=True, gap=gap)
+    # Compile: set metric to auc (default is area under the ROC curve)
+    model.compile(
+            optimizer=tf.keras.optimizers.Adam(0.0003),
+            loss='binary_crossentropy',
+            metrics=[tf.keras.metrics.AUC()]
+            )
     # Get list of weights from path
     weights_list = [f for f in listdir(weights_dir) if f.endswith('.hdf5')]
     weights_paths = [join(weights_dir, f) for f in weights_list if isfile(join(weights_dir, f))]
@@ -612,8 +476,8 @@ def test_model_val_auc_on_datastets(
     names_and_datasets,
     weights_dir,
     condition,
-    model,
-    model_name='RN'
+    gap=True,
+    model_name='ResNet',
     ):
     """
     Test 10 models in weights_dir on each dataset in names_and_datasets.
@@ -632,20 +496,19 @@ def test_model_val_auc_on_datastets(
             ds_val=ds, 
             ds_name=ds_name, 
             weights_dir=weights_dir, 
-            model=model, 
-            model_name=model_name, 
+            gap=True, 
+            model_name='ResNet', 
             condition=condition
             )
         datasets_data.extend(models_data)
     return datasets_data 
 
 def test_all_conditions_val_auc(
-    strategy,
     autotune_settings,
     batch_size, 
     ds_dir,
     sim_dir,
-    relnet=True
+    relnet=False
     ):
     original_ds = get_dataset(
         batch_size=batch_size,
@@ -740,65 +603,50 @@ def test_all_conditions_val_auc(
                     ('Arrows', arrows_ds)
                     ]
     weights_dirs = [
-                    sim_dir+'/relnet_no_regular', 
-                    sim_dir+'/relnet_no_irregular', 
-                    sim_dir+'/relnet_no_open',
-                    sim_dir+'/relnet_no_wider', 
-                    sim_dir+'/relnet_no_scrambled',
-                    sim_dir+'/relnet_no_random',
-                    sim_dir+'/relnet_no_filled', 
-                    sim_dir+'/relnet_no_lines', 
-                    sim_dir+'/relnet_no_arrows'
+                    sim_dir+'/no_regular', 
+                    sim_dir+'/no_irregular', 
+                    sim_dir+'/no_open',
+                    sim_dir+'/no_wider', 
+                    sim_dir+'/no_scrambled',
+                    sim_dir+'/no_random',
+                    sim_dir+'/no_filled', 
+                    sim_dir+'/no_lines', 
+                    sim_dir+'/no_arrows'
                     ]
-    # Define model architecture
-    with strategy.scope():
-        base_model, model = make_ResNet50_relnet(
-            dataset='SVRT',
-            resnet_layer='last_size_8',
-            trainable=True
+    results = []
+    for w_dir in weights_dirs:
+        # Identify ds to ignore for condition
+        if w_dir.endswith('no_regular'):
+            ds_to_ignore = 'Regular'
+        elif w_dir.endswith('no_irregular'):
+            ds_to_ignore = 'Irregular'
+        elif w_dir.endswith('no_open'):
+            ds_to_ignore = 'Open'
+        elif w_dir.endswith('no_wider'):
+            ds_to_ignore = 'Wider Line'
+        elif w_dir.endswith('no_scrambled'):
+            ds_to_ignore = 'Scrambled'
+        elif w_dir.endswith('no_random'):
+            ds_to_ignore = 'Random Color'
+        elif w_dir.endswith('no_filled'):
+            ds_to_ignore = 'Filled'
+        elif w_dir.endswith('no_lines'):
+            ds_to_ignore = 'Lines'
+        elif w_dir.endswith('no_arrows'):
+            ds_to_ignore = 'Arrows'
+        else:
+            raise ValueError('Unrecognised dataset name!')
+        print(ds_to_ignore)
+        condition_names_and_ds = [x for x in names_and_ds if x[0] != ds_to_ignore]
+        condition_data = test_model_val_auc_on_datastets(
+            names_and_datasets=condition_names_and_ds,
+            weights_dir=w_dir,
+            condition=ds_to_ignore
             )
-        # Compile: set metric to auc
-        model.compile(
-                optimizer=tf.keras.optimizers.Adam(0.0003),
-                loss='binary_crossentropy',
-                metrics=[tf.keras.metrics.AUC()]
-                )
-        results = []
-        for w_dir in weights_dirs:
-            # Identify ds to ignore for condition
-            if w_dir.endswith('no_regular'):
-                ds_to_ignore = 'Regular'
-            elif w_dir.endswith('no_irregular'):
-                ds_to_ignore = 'Irregular'
-            elif w_dir.endswith('no_open'):
-                ds_to_ignore = 'Open'
-            elif w_dir.endswith('no_wider'):
-                ds_to_ignore = 'Wider Line'
-            elif w_dir.endswith('no_scrambled'):
-                ds_to_ignore = 'Scrambled'
-            elif w_dir.endswith('no_random'):
-                ds_to_ignore = 'Random Color'
-            elif w_dir.endswith('no_filled'):
-                ds_to_ignore = 'Filled'
-            elif w_dir.endswith('no_lines'):
-                ds_to_ignore = 'Lines'
-            elif w_dir.endswith('no_arrows'):
-                ds_to_ignore = 'Arrows'
-            else:
-                raise ValueError('Unrecognised dataset name!')
-            condition_names_and_ds = [x for x in names_and_ds if x[0] != ds_to_ignore]
-            condition_data = test_model_val_auc_on_datastets(
-                names_and_datasets=condition_names_and_ds,
-                weights_dir=w_dir,
-                condition=ds_to_ignore,
-                model=model,
-                model_name='RN'
-                )
-            results.extend(condition_data)
+        results.extend(condition_data)
     return pd.DataFrame(results, columns=['Model', 'Condition', 'Testing data', 'AUC'])
 
 # Test functions
-# Note get_master_test_dataset is not used because I have the validation datasets
 def get_master_test_dataset(
     batch_size, 
     ds_dir, 
@@ -852,28 +700,38 @@ def get_master_test_dataset(
     
     return ds
 
-def test_relnet_auc(
+def test_model_auc(
     ds_untrained, 
-    weights_dir,
-    model,
+    weights_dir, 
+    gap, 
     model_name, 
     condition
     ):
-    """Tests 10 versions of a single relation network in a single condition using the area under the ROC curve. 
+    """Tests 10 versions of a single model in a single condition using the area under the ROC curve. 
     Args:
         ds_untrained: data from the condition not trained on.
         weights_dir: directory of models weights to test.
+        gap: wheather to use GAP. True or False.
         model_name: model name. String.
         condition: condition name. String.
     Returns:
         A list with test data: model_name, condition, area under the ROC curve.
     """
     
-    # Get list of weights from path
+    # Define model architecture.
+    base_model, model = make_ResNet50_sd_classifier(base_weights=None, base_trainable=True, gap=gap)
+    
+    # Compile: set metric to auc (default is area under the ROC curve).
+    model.compile(
+            optimizer=tf.keras.optimizers.Adam(0.0003),
+            loss='binary_crossentropy',
+            metrics=[tf.keras.metrics.AUC()])
+    
+    # Get list of weights from path.
     weights_list = [f for f in listdir(weights_dir) if f.endswith('.hdf5')]
     weights_paths = [join(weights_dir, f) for f in weights_list if isfile(join(weights_dir, f))]
     
-    # Test each model
+    # Test each model.
     models_data = []
     for w_path in weights_paths:
         model.load_weights(w_path)
@@ -882,149 +740,121 @@ def test_relnet_auc(
     
     return models_data
 
-def test_relnet_all_ds_auc(
-    strategy,
-    autotune_settings,
-    batch_size, 
-    ds_dir, 
-    sim_dir
-    ):
+def test_all_ds_auc(batch_size, ds_dir, sim_dir, autotune_settings):
     # Load same/different datasets.
     untrained_dss = []
-        
-    # Regular
+
+    # Regular.
     regular_ds = get_dataset(
         batch_size=batch_size,
         tfrecord_dir=ds_dir+'/regular_test.tfrecords',
         is_training=False,
         process_img=True,
-        relnet=True,
         autotune_settings=autotune_settings
-        )    
+        )
     untrained_dss.append(regular_ds)
     
-    # Irregular
+    # Irregular.
     irregular_ds = get_dataset(
         batch_size=batch_size,
         tfrecord_dir=ds_dir+'/irregular_test.tfrecords',
         is_training=False,
         process_img=True,
-        relnet=True,
         autotune_settings=autotune_settings
         )
     untrained_dss.append(irregular_ds)
     
-    # Open
+    # Open.
     open_ds = get_dataset(
         batch_size=batch_size,
         tfrecord_dir=ds_dir+'/open_test.tfrecords',
         is_training=False,
         process_img=True,
-        relnet=True,
         autotune_settings=autotune_settings
-        )    
+        )
     untrained_dss.append(open_ds)
 
-    # Wider line
+    # Wider line.
     wider_ds = get_dataset(
         batch_size=batch_size,
         tfrecord_dir=ds_dir+'/wider_line_test.tfrecords',
         is_training=False,
         process_img=True,
-        relnet=True,
         autotune_settings=autotune_settings
-        )    
+        )
     untrained_dss.append(wider_ds)
     
-    # Scrambled
+    # Scrambled.
     scrambled_ds = get_dataset(
         batch_size=batch_size,
         tfrecord_dir=ds_dir+'/scrambled_test.tfrecords',
         is_training=False,
         process_img=True,
-        relnet=True,
         autotune_settings=autotune_settings
-        )    
+        )
     untrained_dss.append(scrambled_ds)
     
-    # Random color
+    # Random color.
     random_ds = get_dataset(
         batch_size=batch_size,
         tfrecord_dir=ds_dir+'/random_color_test.tfrecords',
         is_training=False,
         process_img=True,
-        relnet=True,
         autotune_settings=autotune_settings
-        )    
+        )
     untrained_dss.append(random_ds)
     
-    # Filled
+    # Filled.
     filled_ds = get_dataset(
         batch_size=batch_size,
         tfrecord_dir=ds_dir+'/filled_test.tfrecords',
         is_training=False,
         process_img=True,
-        relnet=True,
         autotune_settings=autotune_settings
-        )    
+        )
     untrained_dss.append(filled_ds)
     
-    # Lines
+    # Lines.
     lines_ds = get_dataset(
         batch_size=batch_size,
         tfrecord_dir=ds_dir+'/lines_test.tfrecords',
         is_training=False,
         process_img=True,
-        relnet=True,
         autotune_settings=autotune_settings
-        )    
+        )
     untrained_dss.append(lines_ds)
-
-    # Arrows
+    
+    # Arrows.
     arrows_ds = get_dataset(
         batch_size=batch_size,
         tfrecord_dir=ds_dir+'/arrows_test.tfrecords',
         is_training=False,
         process_img=True,
-        relnet=True,
         autotune_settings=autotune_settings
-        )    
+        )
     untrained_dss.append(arrows_ds)
     
     conditions = ['Regular', 'Irregular', 'Open', 'Wider Line', 'Scrambled', 'Random Color', 'Filled', 'Lines', 'Arrows']
     weights_dirs = [
-                    sim_dir+'/relnet_no_regular', 
-                    sim_dir+'/relnet_no_irregular', 
-                    sim_dir+'/relnet_no_open',
-                    sim_dir+'/relnet_no_wider', 
-                    sim_dir+'/relnet_no_scrambled',
-                    sim_dir+'/relnet_no_random',
-                    sim_dir+'/relnet_no_filled', 
-                    sim_dir+'/relnet_no_lines', 
-                    sim_dir+'/relnet_no_arrows'
+                    sim_dir+'/no_regular', 
+                    sim_dir+'/no_irregular', 
+                    sim_dir+'/no_open',
+                    sim_dir+'/no_wider', 
+                    sim_dir+'/no_scrambled',
+                    sim_dir+'/no_random',
+                    sim_dir+'/no_filled', 
+                    sim_dir+'/no_lines', 
+                    sim_dir+'/no_arrows'
                     ]
-    # Define model architecture
-    with strategy.scope():
-        base_model, model = make_ResNet50_relnet(
-            dataset='SVRT',
-            resnet_layer='last_size_8',
-            trainable=True
-            )
-        # Compile: set metric to auc (default is area under the ROC curve)
-        model.compile(
-                optimizer=tf.keras.optimizers.Adam(0.0003),
-                loss='binary_crossentropy',
-                metrics=[tf.keras.metrics.AUC()]
-                )
-        results = []
-        for ds2, condition, w_dir in zip(untrained_dss, conditions, weights_dirs):
-            data = test_relnet_auc(
-                ds_untrained=ds2,
-                weights_dir=w_dir,
-                model=model,
-                model_name='RN',
-                condition=condition)
-            results.extend(data)
+    results = []
+    for ds, condition, w_dir in zip(untrained_dss, conditions, weights_dirs):
+        data = test_model_auc(
+            ds_untrained=ds,
+            weights_dir=w_dir,
+            gap=True,
+            model_name='ResNet',
+            condition=condition)
+        results.extend(data)
     
     return pd.DataFrame(results, columns=['Model', 'Condition', 'Testing data', 'AUC'])
 
@@ -1037,27 +867,17 @@ if __name__ == '__main__':
     STEPS_PER_EPOCH = 28000 // BATCH_SIZE
     VALIDATION_STEPS = 2800 // BATCH_SIZE
 
-    # Pretrain
+    # Train instances in each training condition.
     AUTO = tf.data.experimental.AUTOTUNE
     strategy = tf.distribute.get_strategy()
-    pretrain_relnet_in_all_datasets(
+
+    # Train instances in each training condition.
+    train_in_all_datasets(
         strategy=strategy,
         autotune_settings=AUTO,
         ds_dir='data',
         sim_dir='simulation_2',
-        epochs=EPOCHS_TOP,
-        steps_per_epoch=STEPS_PER_EPOCH,
-        validation_steps=VALIDATION_STEPS,
-        n=10,
-        lr=0.0003,
-        batch_size=BATCH_SIZE
-        )
-    # Train
-    train_relnet_in_all_datasets(
-        strategy=strategy,
-        autotune_settings=AUTO,
-        ds_dir='data',
-        sim_dir='simulation_2',
+        epochs_top=EPOCHS_TOP,
         epochs=EPOCHS,
         steps_per_epoch=STEPS_PER_EPOCH,
         validation_steps=VALIDATION_STEPS,
@@ -1067,22 +887,18 @@ if __name__ == '__main__':
         )
     # Validate and save
     df = test_all_conditions_val_auc(
-        strategy=strategy,
         autotune_settings=AUTO,
         batch_size=560, 
         ds_dir='data',
         sim_dir='simulation_2',
-        relnet=True
         )
-    df.to_csv('simulation_2/sim_2_RN_val_auc.csv')
+    df.to_csv('simulation_2/sim_2_resnet_val_auc.csv')
 
     # Test and save.
-    df = test_relnet_all_ds_auc(
-        strategy=strategy,
+    df = test_all_ds_auc(
         autotune_settings=AUTO,
         batch_size=560,
-        ds_dir='data',
+        ds_dir='gs://original-ds',
         sim_dir='simulation_2'
         )
-    df.to_csv('simulation_2/sim_2_RN_test_auc.csv')
-    
+    df.to_csv('simulation_2/sim_2_resnet_test_auc.csv')
