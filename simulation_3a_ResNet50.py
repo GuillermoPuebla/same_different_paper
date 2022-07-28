@@ -626,7 +626,7 @@ if __name__ == '__main__':
         autotune_settings=AUTO,
         batch_size=560, 
         weights_dir='simulation_3/relative_position/ResNet_instances', 
-        ds_dir='gs://original-ds'
+        ds_dir='data'
         )
     df.to_csv('simulation_3/relative_position/sim_3_ResNet50_relpos_test_auc.csv')
     
